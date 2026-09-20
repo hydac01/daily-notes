@@ -217,6 +217,149 @@
     });
   </script>
   <script src="main.js?v=18"></script>
+
+  <!-- ===== 追加機能: 送信ボタン2モード（メッセージ送信 / コメント投稿） =====
+       切替: 「同期履歴を表示」ボタンを長押し（600ms）
+       モード0: 既存の送信処理（main.js）をそのまま実行
+       モード1: 動画一覧の項目にコメントを投稿（localStorage 保存・端末ローカル・非暗号化） -->
+  <script>
+  (function () {
+    var sendBtn = document.getElementById('send');
+    var input = document.getElementById('input');
+    var toggleBtn = document.getElementById('toggle-log'); // 長押し対象
+    if (!sendBtn || !input || !toggleBtn) return;
+
+    var LONG_MS = 600, KEY = 'memoComments';
+    var mode = 0, target = null;
+    var baseLabel = sendBtn.textContent, basePh = input.placeholder;
+
+    // --- CSS ---
+    var st = document.createElement('style');
+    st.textContent =
+      '#toggle-log{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}' +
+      '.video-item.cmt-target{outline:2px solid #065fd4;background:#eef5ff}' +
+      '.cmt-box{margin-top:4px;font-size:.75rem}' +
+      '.cmt{border-left:3px solid #ccc;padding-left:6px;margin:2px 0;word-break:break-word}' +
+      '.cmt-t{color:var(--sub)}.cmt-del{color:var(--accent);cursor:pointer;padding:0 4px}';
+    document.head.appendChild(st);
+
+    // --- トースト ---
+    var toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);background:#333;color:#fff;padding:6px 12px;border-radius:14px;font-size:.8rem;display:none;z-index:10000';
+    document.body.appendChild(toast);
+    function note(m) {
+      toast.textContent = m; toast.style.display = 'block';
+      clearTimeout(note.t); note.t = setTimeout(function () { toast.style.display = 'none'; }, 2000);
+    }
+
+    // --- 保存 ---
+    function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
+    function save(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { note('保存に失敗しました'); } }
+    function keyOf(item) { var a = item.querySelector('a.title'); return a ? a.getAttribute('href') : null; }
+    function stamp() {
+      var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
+      return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    // --- 表示 ---
+    function render(item) {
+      var meta = item.querySelector('.meta'), k = keyOf(item);
+      if (!meta || !k) return;
+      var box = meta.querySelector('.cmt-box');
+      if (!box) { box = document.createElement('div'); box.className = 'cmt-box'; meta.appendChild(box); }
+      box.textContent = '';
+      (load()[k] || []).forEach(function (c, i) {
+        var row = document.createElement('div'); row.className = 'cmt';
+        var t = document.createElement('span'); t.className = 'cmt-t'; t.textContent = c.at + ' ';
+        var x = document.createElement('span'); x.textContent = c.text;
+        var del = document.createElement('span'); del.className = 'cmt-del'; del.textContent = '×';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (!confirm('このコメントを削除しますか？')) return;
+          var d = load(); if (d[k]) { d[k].splice(i, 1); save(d); } render(item);
+        });
+        row.appendChild(t); row.appendChild(x); row.appendChild(del);
+        box.appendChild(row);
+      });
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.video-item'), render);
+
+    // --- コメント投稿 ---
+    function postComment() {
+      var text = input.value.trim();
+      if (!text) return;
+      if (!target) { note('コメント対象の動画をタップしてください'); return; }
+      var k = keyOf(target), d = load();
+      (d[k] = d[k] || []).push({ at: stamp(), text: text });
+      save(d); render(target); input.value = ''; note('コメントを追加しました');
+    }
+    // --- イベント制御（document の capture で実行。main.js が #send / #input に直接登録した
+    //     リスナーより必ず先に動くため、ブラウザの実行順に依存しない） ---
+    var fired = false;   // 長押しが成立した直後か
+
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      // 長押し直後の click は、同期履歴の表示切替を実行しない
+      if (t.closest('#toggle-log') && fired) {
+        e.stopImmediatePropagation(); e.preventDefault(); return;
+      }
+      if (mode !== 1) return;                      // モード0: 既存処理へ素通し
+      // モード1: 送信ボタン → 既存の送信を止めてコメント投稿
+      if (t.closest('#send')) {
+        e.stopImmediatePropagation(); e.preventDefault(); postComment(); return;
+      }
+      // モード1: 動画項目のタップ → コメント対象を選択（YouTube への遷移を抑止）
+      if (t.closest('.cmt-del')) return;
+      var item = t.closest('.video-item');
+      if (!item) return;
+      e.preventDefault();
+      Array.prototype.forEach.call(document.querySelectorAll('.cmt-target'), function (n) { n.classList.remove('cmt-target'); });
+      item.classList.add('cmt-target');
+      target = item;
+      note('対象: ' + item.querySelector('a.title').textContent.slice(0, 20));
+    }, true);
+
+    // モード1のEnter: 既存の送信(main.js)は常に止める。IME変換中はコメント投稿もしない
+    ['keydown', 'keypress', 'keyup'].forEach(function (ev) {
+      document.addEventListener(ev, function (e) {
+        if (mode !== 1 || e.target !== input) return;
+        if (e.key !== 'Enter' && e.keyCode !== 13) return;
+        e.stopImmediatePropagation(); e.preventDefault();
+        if (ev === 'keydown' && !e.isComposing) postComment();
+      }, true);
+    });
+
+    // コメント入力を「入力中」通知(broadcastTyping)に流さない
+    document.addEventListener('input', function (e) {
+      if (mode === 1 && e.target === input) e.stopImmediatePropagation();
+    }, true);
+
+    // --- モード切替（長押し） ---
+    function applyMode() {
+      sendBtn.textContent = mode === 1 ? 'コメント' : baseLabel;
+      sendBtn.style.background = mode === 1 ? '#065fd4' : '';
+      input.placeholder = mode === 1 ? 'コメントを追加...' : basePh;
+      note(mode === 1 ? 'モード: コメント投稿' : 'モード: メッセージ送信');
+    }
+    var timer = null;
+    toggleBtn.addEventListener('pointerdown', function () {
+      fired = false;
+      timer = setTimeout(function () {
+        fired = true; mode = 1 - mode; applyMode();
+        if (navigator.vibrate) navigator.vibrate(30);
+      }, LONG_MS);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (ev) {
+      toggleBtn.addEventListener(ev, function () {
+        clearTimeout(timer);
+        setTimeout(function () { fired = false; }, 300);
+      });
+    });
+    toggleBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  })();
+  </script>
+  <!-- ===== 追加機能ここまで ===== -->
 </div>
 </body>
 </html>
