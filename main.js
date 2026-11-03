@@ -492,3 +492,76 @@ function buildMessageElement(msg) {
     saveBtn.addEventListener('click', () => saveEdit(msg.id, editInput.value));
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'キャンセル';
+        cancelBtn.addEventListener('click', cancelEdit);
+    div.appendChild(editInput);
+    div.appendChild(saveBtn);
+    div.appendChild(cancelBtn);
+    return div;
+  }
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = msg._plain;
+  div.appendChild(textSpan);
+  attachLongPress(textSpan, msg._plain);
+
+  const meta = document.createElement('span');
+  meta.className = 'msg-meta';
+  let metaText = formatTime(msg.created_at);
+  if (msg.edited_at) metaText += ' (編集済み)';
+  if (isMine) metaText += msg.read_at ? ' 既読' : ' 未読';
+  meta.textContent = metaText;
+  div.appendChild(meta);
+
+  const replyBtn = document.createElement('span');
+  replyBtn.className = 'msg-action';
+  replyBtn.textContent = '[返信]';
+  replyBtn.addEventListener('click', () => setReplyTarget(msg.id, msg._plain));
+  div.appendChild(replyBtn);
+
+  if (isMine) {
+    const editBtn = document.createElement('span');
+    editBtn.className = 'msg-action';
+    editBtn.textContent = '[編集]';
+    editBtn.addEventListener('click', () => startEdit(msg.id));
+    div.appendChild(editBtn);
+
+    const delBtn = document.createElement('span');
+    delBtn.className = 'msg-action danger';
+    delBtn.textContent = '[削除]';
+    delBtn.addEventListener('click', () => deleteMessage(msg.id));
+    div.appendChild(delBtn);
+  }
+
+  return div;
+}
+
+checkInviteCode();
+
+// ===== アクセス確認 =====
+const INVITE_CODE = "0903";
+
+function checkInviteCode() {
+    const stored = localStorage.getItem('inviteVerified');
+    if (stored === 'true') {
+        document.getElementById('app-container').style.display = 'block';
+        startApp();
+        return;
+    }
+    document.getElementById('invite-setup').style.display = 'block';
+}
+
+function submitInviteCode() {
+    const input = document.getElementById('invite-code-input').value.trim();
+    if (input === INVITE_CODE) {
+        localStorage.setItem('inviteVerified', 'true');
+        document.getElementById('invite-setup').style.display = 'none';
+        document.getElementById('app-container').style.display = 'block';
+        startApp();
+    } else {
+        document.getElementById('invite-error').textContent = 'コードが違います';
+    }
+}
+
+function startApp() {
+    initAuth();
+}
