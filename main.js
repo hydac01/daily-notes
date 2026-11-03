@@ -18,6 +18,7 @@ let partnerLastSeen = null;
 let cryptoKey = null;
 let logVisible = false;
 let roomWaitChannel = null;
+let roomPollTimer = null;
 
 function formatTime(ts) {
   const d = new Date(ts);
@@ -123,21 +124,21 @@ document.getElementById('room-reset-btn').addEventListener('click', async () => 
   }
 
   resetBtn.style.display = 'none';
-  statusEl.textContent = 'リセット完了。もう一度「接続」を押してください。';
+  statusEl.textContent = 'リセット完了。もう一度「参加」を押してください。';
 });
 
+// 変更点：Realtime通知（groupsはSELECT不可で届かない）をやめ、3秒ごとにjoin_groupで確認
 function subscribeRoomWait(roomKey) {
-  roomWaitChannel = sb.channel('room-wait-' + roomKey)
-    .on('postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'groups', filter: `room_key=eq.${roomKey}` },
-      async (payload) => {
-        const partnerId = payload.new.participant_2;
-        if (partnerId) {
-          sb.removeChannel(roomWaitChannel);
-          await onRoomConnected(partnerId);
-        }
-      })
-    .subscribe();
+  clearInterval(roomPollTimer);
+  roomPollTimer = setInterval(async () => {
+    const { data, error } = await sb.rpc('join_group', { p_room_key: roomKey });
+    if (error) return;
+    const r = Array.isArray(data) ? data[0] : data;
+    if (r && !r.is_waiting && r.partner_id) {
+      clearInterval(roomPollTimer);
+      await onRoomConnected(r.partner_id);
+    }
+  }, 3000);
 }
 
 async function onRoomConnected(partnerId) {
@@ -167,14 +168,19 @@ async function initAuth() {
   }
 }
 
+// 変更点：既にlinksにあればupsertしない（INSERTのみ。重複エラー23505は無視）
 async function registerParticipantPair() {
   const key = [myUserId, partnerUserId].sort().join('_');
-  const { error } = await sb.from('links').upsert({
+  const { data: existing, error: e1 } = await sb.from('links')
+    .select('conversation_key').eq('conversation_key', key).maybeSingle();
+  if (e1) { showError('リンク確認エラー: ' + e1.message); return; }
+  if (existing) return;
+  const { error } = await sb.from('links').insert({
     conversation_key: key,
     user_id_1: myUserId,
     user_id_2: partnerUserId
-  }, { onConflict: 'conversation_key' });
-  if (error) showError('リンク登録エラー: ' + error.message);
+  });
+  if (error && error.code !== '23505') showError('リンク登録エラー: ' + error.message);
 }
 
 document.getElementById('room-passphrase-submit').addEventListener('click', submitRoomPassphrase);
@@ -486,76 +492,3 @@ function buildMessageElement(msg) {
     saveBtn.addEventListener('click', () => saveEdit(msg.id, editInput.value));
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'キャンセル';
-    cancelBtn.addEventListener('click', cancelEdit);
-    div.appendChild(editInput);
-    div.appendChild(saveBtn);
-    div.appendChild(cancelBtn);
-    return div;
-  }
-
-  const textSpan = document.createElement('span');
-  textSpan.textContent = msg._plain;
-  div.appendChild(textSpan);
-  attachLongPress(textSpan, msg._plain);
-
-  const meta = document.createElement('span');
-  meta.className = 'msg-meta';
-  let metaText = formatTime(msg.created_at);
-  if (msg.edited_at) metaText += ' (編集済み)';
-  if (isMine) metaText += msg.read_at ? ' 既読' : ' 未読';
-  meta.textContent = metaText;
-  div.appendChild(meta);
-
-  const replyBtn = document.createElement('span');
-  replyBtn.className = 'msg-action';
-  replyBtn.textContent = '[返信]';
-  replyBtn.addEventListener('click', () => setReplyTarget(msg.id, msg._plain));
-  div.appendChild(replyBtn);
-
-  if (isMine) {
-    const editBtn = document.createElement('span');
-    editBtn.className = 'msg-action';
-    editBtn.textContent = '[編集]';
-    editBtn.addEventListener('click', () => startEdit(msg.id));
-    div.appendChild(editBtn);
-
-    const delBtn = document.createElement('span');
-    delBtn.className = 'msg-action danger';
-    delBtn.textContent = '[削除]';
-    delBtn.addEventListener('click', () => deleteMessage(msg.id));
-    div.appendChild(delBtn);
-  }
-
-  return div;
-}
-
-checkInviteCode();
-
-// ===== アクセス確認 =====
-const INVITE_CODE = "0903";
-
-function checkInviteCode() {
-    const stored = localStorage.getItem('inviteVerified');
-    if (stored === 'true') {
-        document.getElementById('app-container').style.display = 'block';
-        startApp();
-        return;
-    }
-    document.getElementById('invite-setup').style.display = 'block';
-}
-
-function submitInviteCode() {
-    const input = document.getElementById('invite-code-input').value.trim();
-    if (input === INVITE_CODE) {
-        localStorage.setItem('inviteVerified', 'true');
-        document.getElementById('invite-setup').style.display = 'none';
-        document.getElementById('app-container').style.display = 'block';
-        startApp();
-    } else {
-        document.getElementById('invite-error').textContent = 'コードが違います';
-    }
-}
-
-function startApp() {
-    initAuth();
-}
