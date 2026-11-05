@@ -16,6 +16,8 @@ const DECRYPT_ERROR = '[復号エラー：合言葉不一致または未暗号�
 let myUserId = null;
 let partnerUserId = localStorage.getItem('partnerUserId');
 if (partnerUserId === 'null' || partnerUserId === '') partnerUserId = null;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (partnerUserId && !UUID_RE.test(partnerUserId)) partnerUserId = null;
 
 let allMessages = [];
 let searchTerm = '';
@@ -188,9 +190,17 @@ document.getElementById('room-reset-btn').addEventListener('click', async () => 
 });
 
 // groups は SELECT 不可で Realtime 通知が届かないため、3秒ごとに join_group で確認する
+// 10分で打ち切り（再度「参加」で再開できる）
 function subscribeRoomWait(roomKey) {
   clearInterval(roomPollTimer);
+  const waitStartedAt = Date.now();
   roomPollTimer = setInterval(async () => {
+    if (Date.now() - waitStartedAt > 10 * 60 * 1000) {
+      clearInterval(roomPollTimer);
+      document.getElementById('room-status').textContent =
+        '待機がタイムアウトしました。もう一度「参加」を押してください。';
+      return;
+    }
     const { data, error } = await sb.rpc('join_group', { p_room_key: roomKey });
     if (error) return;
     const r = Array.isArray(data) ? data[0] : data;
@@ -263,7 +273,7 @@ function checkPassphrase() {
   }
 }
 document.getElementById('passphrase-submit').addEventListener('click', () => {
-  const val = document.getElementById('passphrase-input').value;
+  const val = document.getElementById('passphrase-input').value.trim();
   if (!val) return;
   sessionStorage.setItem('sharedPassphrase', val);
   document.getElementById('passphrase-setup').style.display = 'none';
@@ -369,6 +379,9 @@ function isRelevant(msg) {
          (msg.sender_id === partnerUserId && msg.receiver_id === myUserId);
 }
 
+// 編集中は再描画しない（入力途中の内容が消えるのを防ぐ。保存・キャンセル時に反映される）
+function renderUnlessEditing() { if (!editingId) renderAll(); }
+
 function subscribeMessages() {
   sb.channel('items-realtime')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'items' }, (payload) => {
@@ -376,7 +389,7 @@ function subscribeMessages() {
       if (!isRelevant(msg)) return;
       if (allMessages.some(m => m.id === msg.id)) return;
       allMessages.push(msg);
-      renderAll();
+      renderUnlessEditing();
       if (msg.sender_id === partnerUserId) markIncomingAsRead();
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'items' }, (payload) => {
@@ -384,14 +397,14 @@ function subscribeMessages() {
       if (!isRelevant(msg)) return;
       const idx = allMessages.findIndex(m => m.id === msg.id);
       if (idx !== -1) allMessages[idx] = msg;
-      renderAll();
+      renderUnlessEditing();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'items' }, (payload) => {
       const id = payload.old && payload.old.id;
       if (!id || !allMessages.some(m => m.id === id)) return;
       allMessages = allMessages.filter(m => m.id !== id);
       plainCache.delete(id);
-      renderAll();
+      renderUnlessEditing();
     })
     .subscribe();
 }
@@ -497,7 +510,10 @@ async function sendMessage() {
 }
 document.getElementById('send').addEventListener('click', sendMessage);
 document.getElementById('input').addEventListener('input', broadcastTyping);
-document.getElementById('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+// IME変換確定のEnterでは送信しない
+document.getElementById('input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) sendMessage();
+});
 
 document.getElementById('search-input').addEventListener('input', (e) => {
   searchTerm = e.target.value.trim().toLowerCase();
@@ -517,6 +533,7 @@ function attachLongPress(el, plainText) {
   el.addEventListener('pointerdown', start);
   el.addEventListener('pointerup', cancel);
   el.addEventListener('pointerleave', cancel);
+  el.addEventListener('pointercancel', cancel);
 }
 
 // ---------- 描画 ----------
