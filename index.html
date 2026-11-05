@@ -5,11 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>マイメモ | 端末同期ノート</title>
   <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
   <meta property="og:title" content="マイメモ">
   <meta property="og:description" content="個人用メモを複数端末で同期するためのページです">
   <meta property="og:type" content="website">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%225%22 fill=%22%23e02020%22/><polygon points=%229,7 18,12 9,17%22 fill=%22white%22/></svg>">
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- supabase-js 2.118.0 に完全固定 + SRI（改ざん検知）。更新するときはバージョンとハッシュを必ずセットで変更 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"
+          integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK"
+          crossorigin="anonymous"></script>
   <style>
     :root{
       --ink:#0f0f0f; --sub:#606060; --line:#e5e5e5; --bg:#f6f6f6;
@@ -41,10 +45,10 @@
     button{ background:var(--chip); cursor:pointer; }
     button:active{ filter:brightness(.95); }
 
-    #invite-setup, #room-setup, #partner-setup, #passphrase-setup{
+    #room-setup, #partner-setup, #passphrase-setup{
       margin:10px 14px; padding:14px; border:1px solid var(--line); border-radius:12px; background:#fff;
     }
-    #invite-setup h3, #room-setup p, #partner-setup p, #passphrase-setup p{ margin-top:0; font-size:.95rem; }
+    #room-setup p, #partner-setup p, #passphrase-setup p{ margin-top:0; font-size:.95rem; }
 
     #my-id{ font-size:.75rem; color:var(--sub); word-break:break-all; }
     #partner-status{ font-size:.8rem; color:var(--sub); padding:0 14px; }
@@ -78,15 +82,7 @@
 
 <div class="site-header"><span class="logo"></span><b>マイメモ</b></div>
 
-<div id="invite-setup" style="display:none;">
-  <h3>🔒 非公開メモです</h3>
-  <p style="color:var(--sub); font-size:.85rem;">このメモ帳を開くための端末パスワードを入力してください</p>
-  <input type="text" id="invite-code-input" placeholder="パスワード">
-  <button onclick="submitInviteCode()">送信</button>
-  <p id="invite-error" style="color:#e02020; font-size:.85rem;"></p>
-</div>
-
-<div id="app-container" style="display:none;">
+<div id="app-container">
 
   <div id="font-control" style="position:fixed; top:6px; right:6px; z-index:9999; background:#fff; border:1px solid #ccc; border-radius:8px; padding:4px 6px; display:flex; gap:6px; box-shadow:0 1px 4px rgba(0,0,0,0.15);">
     <button onclick="changeFontSize(-2)" style="font-size:16px; padding:4px 10px;">A-</button>
@@ -115,7 +111,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-08-31 07:27</div>
-        <a class="title" href="https://youtube.com/watch?v=Zd_vvO945Sc&si=PqT1DqsyH-sHp5Q7" target="_blank">【脳の意外な仕組み】億万長者の思考とリンク。聞くだけで成功脳に変化する。</a>
+        <a class="title" href="https://youtube.com/watch?v=Zd_vvO945Sc&si=PqT1DqsyH-sHp5Q7" target="_blank" rel="noopener noreferrer">【脳の意外な仕組み】億万長者の思考とリンク。聞くだけで成功脳に変化する。</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -123,7 +119,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-08-31 07:29</div>
-        <a class="title" href="https://youtube.com/watch?v=RlRLcnWxAUg&si=M7791izSIV4b6XTe" target="_blank">【常識破壊】あなたの人生を激変させる「周波数」の秘密</a>
+        <a class="title" href="https://youtube.com/watch?v=RlRLcnWxAUg&si=M7791izSIV4b6XTe" target="_blank" rel="noopener noreferrer">【常識破壊】あなたの人生を激変させる「周波数」の秘密</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -131,7 +127,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-09-01 07:40</div>
-        <a class="title" href="https://youtube.com/watch?v=eHfWJnqbEf0&si=5tcZh0wJWcHzf8bV" target="_blank">【ワンモアの法則】成功者は知っている最後の1回が人生を逆転することを</a>
+        <a class="title" href="https://youtube.com/watch?v=eHfWJnqbEf0&si=5tcZh0wJWcHzf8bV" target="_blank" rel="noopener noreferrer">【ワンモアの法則】成功者は知っている最後の1回が人生を逆転することを</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -139,7 +135,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-09-02 07:32</div>
-        <a class="title" href="https://youtube.com/watch?v=wkB4t2u5PdU&si=IRTUIXk0QYX8q_yc" target="_blank">【成功者の行動法】99%が凡人のまま終わってしまう本当の理由</a>
+        <a class="title" href="https://youtube.com/watch?v=wkB4t2u5PdU&si=IRTUIXk0QYX8q_yc" target="_blank" rel="noopener noreferrer">【成功者の行動法】99%が凡人のまま終わってしまう本当の理由</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -147,7 +143,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-09-03 07:48</div>
-        <a class="title" href="https://youtube.com/watch?v=IJLmkHEi-CE&si=4hDSIOHy1VvHbkWQ" target="_blank">【15万→1500億の男が明かす】成功する人としない人のたった1つの違い</a>
+        <a class="title" href="https://youtube.com/watch?v=IJLmkHEi-CE&si=4hDSIOHy1VvHbkWQ" target="_blank" rel="noopener noreferrer">【15万→1500億の男が明かす】成功する人としない人のたった1つの違い</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -155,7 +151,7 @@
       <div class="thumb"></div>
       <div class="meta">
         <div class="date">2026-09-03 07:49</div>
-        <a class="title" href="https://youtube.com/watch?v=oqypQ9ww_Os&si=0c6Elnd3n1igO9Tq" target="_blank">【脳の意外な仕組み】気がついたら成功している方法</a>
+        <a class="title" href="https://youtube.com/watch?v=oqypQ9ww_Os&si=0c6Elnd3n1igO9Tq" target="_blank" rel="noopener noreferrer">【脳の意外な仕組み】気がついたら成功している方法</a>
         <div class="channel">内田博史【金持ちの習慣】</div>
       </div>
     </div>
@@ -216,12 +212,13 @@
       document.getElementById('error').textContent = 'Promiseエラー: ' + (e.reason?.message || e.reason);
     });
   </script>
-  <script src="main.js?v=19"></script>
+  <script src="main.js?v=20"></script>
 
   <!-- ===== 追加機能: 送信ボタン2モード（メッセージ送信 / コメント投稿） =====
        切替: 「同期履歴を表示」ボタンを長押し（600ms）
        モード0: 既存の送信処理（main.js）をそのまま実行
-       モード1: 動画一覧の項目にコメントを投稿（localStorage 保存・端末ローカル・非暗号化） -->
+       モード1: 動画一覧の項目にコメントを投稿（localStorage 保存・端末ローカル）
+       コメントは暗号化キー（main.js の memoVault）で暗号化して保存。暗号化キー入力前は表示・投稿不可 -->
   <script>
   (function () {
     var sendBtn = document.getElementById('send');
@@ -232,6 +229,7 @@
     var LONG_MS = 600, KEY = 'memoComments';
     var mode = 0, target = null;
     var baseLabel = sendBtn.textContent, basePh = input.placeholder;
+    var migratePromise = Promise.resolve();
 
     // --- CSS ---
     var st = document.createElement('style');
@@ -252,6 +250,9 @@
       clearTimeout(note.t); note.t = setTimeout(function () { toast.style.display = 'none'; }, 2000);
     }
 
+    // --- 暗号化の可否（main.js が暗号化キー入力後に ready にする） ---
+    function vaultReady() { return !!(window.memoVault && window.memoVault.ready); }
+
     // --- 保存 ---
     function load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
     function save(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { note('保存に失敗しました'); } }
@@ -261,17 +262,47 @@
       return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
     }
 
+    // --- 旧形式（平文）コメントを暗号化形式へ移行 ---
+    async function migrateLegacy() {
+      if (!vaultReady()) return;
+      var d = load(), changed = false;
+      for (var k in d) {
+        if (!Array.isArray(d[k])) continue;
+        for (var i = 0; i < d[k].length; i++) {
+          var c = d[k][i];
+          if (c && typeof c.text === 'string' && !c.ct) {
+            try {
+              c.ct = await window.memoVault.encrypt(c.text, k);
+              delete c.text;
+              changed = true;
+            } catch (e) { /* 失敗した項目は平文のまま残し、次回再試行 */ }
+          }
+        }
+      }
+      if (changed) save(d);
+    }
+
     // --- 表示 ---
-    function render(item) {
+    async function decodeComment(c, k) {
+      if (typeof c.text === 'string') return c.text;                       // 旧形式（移行前）
+      if (!vaultReady()) return '🔒 暗号化コメント（暗号化キー入力後に表示）';
+      try { return await window.memoVault.decrypt(c.ct, k); }
+      catch (e) { return '[復号できません（暗号化キーが変わった可能性）]'; }
+    }
+    async function render(item) {
       var meta = item.querySelector('.meta'), k = keyOf(item);
       if (!meta || !k) return;
       var box = meta.querySelector('.cmt-box');
       if (!box) { box = document.createElement('div'); box.className = 'cmt-box'; meta.appendChild(box); }
+      var list = load()[k] || [];
+      var token = box._tk = (box._tk || 0) + 1;
+      var texts = await Promise.all(list.map(function (c) { return decodeComment(c, k); }));
+      if (box._tk !== token) return;                                       // 新しい描画があれば破棄
       box.textContent = '';
-      (load()[k] || []).forEach(function (c, i) {
+      list.forEach(function (c, i) {
         var row = document.createElement('div'); row.className = 'cmt';
         var t = document.createElement('span'); t.className = 'cmt-t'; t.textContent = c.at + ' ';
-        var x = document.createElement('span'); x.textContent = c.text;
+        var x = document.createElement('span'); x.textContent = texts[i];
         var del = document.createElement('span'); del.className = 'cmt-del'; del.textContent = '×';
         del.addEventListener('click', function (e) {
           e.stopPropagation();
@@ -282,16 +313,33 @@
         box.appendChild(row);
       });
     }
-    Array.prototype.forEach.call(document.querySelectorAll('.video-item'), render);
+    function renderAllItems() {
+      Array.prototype.forEach.call(document.querySelectorAll('.video-item'), render);
+    }
+    renderAllItems();
+
+    // 暗号化キーが使えるようになったら、旧コメントを移行してから再描画
+    function onVaultReady() {
+      migratePromise = migrateLegacy().then(renderAllItems);
+    }
+    window.addEventListener('memo-vault-ready', onVaultReady);
+    if (vaultReady()) onVaultReady();
 
     // --- コメント投稿 ---
-    function postComment() {
+    async function postComment() {
       var text = input.value.trim();
       if (!text) return;
-      if (!target) { note('コメント対象の動画をタップしてください'); return; }
-      var k = keyOf(target), d = load();
-      (d[k] = d[k] || []).push({ at: stamp(), text: text });
-      save(d); render(target); input.value = ''; note('コメントを追加しました');
+      var tgt = target;
+      if (!tgt) { note('コメント対象の動画をタップしてください'); return; }
+      if (!vaultReady()) { note('暗号化キーを入力すると使えます'); return; }
+      await migratePromise;
+      try {
+        var k = keyOf(tgt);
+        var ct = await window.memoVault.encrypt(text, k);
+        var d = load();
+        (d[k] = d[k] || []).push({ at: stamp(), ct: ct });
+        save(d); await render(tgt); input.value = ''; note('コメントを追加しました');
+      } catch (e) { note('コメントの暗号化に失敗しました'); }
     }
     // --- イベント制御（document の capture で実行。main.js が #send / #input に直接登録した
     //     リスナーより必ず先に動くため、ブラウザの実行順に依存しない） ---
