@@ -1,6 +1,17 @@
+// ===== 設定 =====
 const SUPABASE_URL = "https://vshprfqrpicimjboiwjt.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_X8UkIz_-yKic4cxHC0_QQw_5EojlmIa";
+
+if (!window.supabase) {
+  throw new Error('ライブラリの読み込みに失敗しました（バージョン固定またはSRIの不一致の可能性）。index.html の script タグを確認してください');
+}
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// 暗号文の形式：v2 = AAD（id / 送信者 / 受信者）付き。接頭辞なし = 旧形式
+const FORMAT_PREFIX = 'v2:';
+// 旧形式を受け付ける期限。この日時より前に作成された行のみ旧形式を復号する（24時間自動削除のため自然に不要になる）
+const LEGACY_CUTOFF_MS = Date.parse('2026-11-08T00:00:00Z');
+const DECRYPT_ERROR = '[復号エラー：合言葉不一致または未暗号化データ]';
 
 let myUserId = null;
 let partnerUserId = localStorage.getItem('partnerUserId');
@@ -16,9 +27,15 @@ let presenceChannel = null;
 let partnerOnline = false;
 let partnerLastSeen = null;
 let cryptoKey = null;
+let vaultKey = null;
 let logVisible = false;
-let roomWaitChannel = null;
 let roomPollTimer = null;
+let markReadWarned = false;
+let renderSeq = 0;
+const plainCache = new Map(); // id -> { content, reply, plain, replyPlain }
+
+const te = new TextEncoder();
+const td = new TextDecoder();
 
 function formatTime(ts) {
   const d = new Date(ts);
@@ -31,12 +48,24 @@ function formatDate(ts) {
 function formatDateTime(ts) { return formatDate(ts) + ' ' + formatTime(ts); }
 function showError(text) { document.getElementById('error').textContent = text; }
 
-// ---------- データ処理 ----------
+// ---------- 暗号処理 ----------
+// 長文でも引数上限に当たらないよう、分割してbase64化する
+function bytesToB64(bytes) {
+  let s = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(s);
+}
+function b64ToBytes(b64) {
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+
 async function getKeyFromPassphrase(passphrase, saltString) {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  const keyMaterial = await crypto.subtle.importKey('raw', te.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: enc.encode(saltString), iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: te.encode(saltString), iterations: 100000, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -48,32 +77,63 @@ async function initCrypto() {
   const conversationKey = [myUserId, partnerUserId].sort().join('_');
   cryptoKey = await getKeyFromPassphrase(passphrase, conversationKey);
 }
-async function encryptText(plain) {
+
+async function aesEncrypt(key, plain, aad) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder();
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, enc.encode(plain));
-  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  const params = { name: 'AES-GCM', iv };
+  if (aad) params.additionalData = aad;
+  const ct = new Uint8Array(await crypto.subtle.encrypt(params, key, te.encode(plain)));
+  const combined = new Uint8Array(iv.length + ct.length);
   combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), iv.length);
-  return btoa(String.fromCharCode(...combined));
+  combined.set(ct, iv.length);
+  return bytesToB64(combined);
 }
-async function decryptText(b64) {
+async function aesDecrypt(key, b64, aad) {
+  const combined = b64ToBytes(b64);
+  const params = { name: 'AES-GCM', iv: combined.slice(0, 12) };
+  if (aad) params.additionalData = aad;
+  const dec = await crypto.subtle.decrypt(params, key, combined.slice(12));
+  return td.decode(dec);
+}
+
+// AAD：暗号文を別の行・別の項目へ移植しても復号が通らないようにする
+function aadFor(field, m) {
+  return te.encode(['v2', field, m.id, m.sender_id, m.receiver_id]
+    .map(x => String(x).toLowerCase()).join('|'));
+}
+async function encryptField(plain, field, m) {
+  return FORMAT_PREFIX + await aesEncrypt(cryptoKey, plain, aadFor(field, m));
+}
+async function decryptField(stored, field, m) {
   try {
-    const combined = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    const iv = combined.slice(0, 12);
-    const data = combined.slice(12);
-    const dec = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, data);
-    return new TextDecoder().decode(dec);
+    if (stored.startsWith(FORMAT_PREFIX)) {
+      return await aesDecrypt(cryptoKey, stored.slice(FORMAT_PREFIX.length), aadFor(field, m));
+    }
+    if (Date.parse(m.created_at) < LEGACY_CUTOFF_MS) {
+      return await aesDecrypt(cryptoKey, stored, null);
+    }
+    return DECRYPT_ERROR;
   } catch (e) {
-    return '[復号エラー：合言葉不一致または未暗号化データ]';
+    return DECRYPT_ERROR;
   }
+}
+
+// 動画一覧コメント用の暗号化（index.html から利用）。暗号化キーを入力するまで使えない
+window.memoVault = {
+  ready: false,
+  async encrypt(plain, ctx) { return aesEncrypt(vaultKey, plain, te.encode('v1|comment|' + ctx)); },
+  async decrypt(b64, ctx) { return aesDecrypt(vaultKey, b64, te.encode('v1|comment|' + ctx)); }
+};
+async function initVault() {
+  const passphrase = sessionStorage.getItem('sharedPassphrase');
+  vaultKey = await getKeyFromPassphrase(passphrase, 'memo-comments-v1');
+  window.memoVault.ready = true;
+  window.dispatchEvent(new Event('memo-vault-ready'));
 }
 
 // ---------- 端末リンク処理 ----------
 async function sha256Hex(text) {
-  const enc = new TextEncoder();
-  const data = enc.encode(text);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', te.encode(text));
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
@@ -127,7 +187,7 @@ document.getElementById('room-reset-btn').addEventListener('click', async () => 
   statusEl.textContent = 'リセット完了。もう一度「参加」を押してください。';
 });
 
-// 変更点：Realtime通知（groupsはSELECT不可で届かない）をやめ、3秒ごとにjoin_groupで確認
+// groups は SELECT 不可で Realtime 通知が届かないため、3秒ごとに join_group で確認する
 function subscribeRoomWait(roomKey) {
   clearInterval(roomPollTimer);
   roomPollTimer = setInterval(async () => {
@@ -168,7 +228,7 @@ async function initAuth() {
   }
 }
 
-// 変更点：既にlinksにあればupsertしない（INSERTのみ。重複エラー23505は無視）
+// 既に links にあれば登録しない（INSERT のみ。重複エラー 23505 は無視）
 async function registerParticipantPair() {
   const key = [myUserId, partnerUserId].sort().join('_');
   const { data: existing, error: e1 } = await sb.from('links')
@@ -219,6 +279,7 @@ document.getElementById('reset-partner').addEventListener('click', () => {
 async function startChat() {
   await registerParticipantPair();
   await initCrypto();
+  await initVault();
   await loadMessages();
   subscribeMessages();
   subscribeTyping();
@@ -313,6 +374,7 @@ function subscribeMessages() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'items' }, (payload) => {
       const msg = payload.new;
       if (!isRelevant(msg)) return;
+      if (allMessages.some(m => m.id === msg.id)) return;
       allMessages.push(msg);
       renderAll();
       if (msg.sender_id === partnerUserId) markIncomingAsRead();
@@ -325,7 +387,10 @@ function subscribeMessages() {
       renderAll();
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'items' }, (payload) => {
-      allMessages = allMessages.filter(m => m.id !== payload.old.id);
+      const id = payload.old && payload.old.id;
+      if (!id || !allMessages.some(m => m.id === id)) return;
+      allMessages = allMessages.filter(m => m.id !== id);
+      plainCache.delete(id);
       renderAll();
     })
     .subscribe();
@@ -348,10 +413,14 @@ function broadcastTyping() {
   typingChannel.send({ type: 'broadcast', event: 'typing', payload: { userId: myUserId } });
 }
 
+// 既読更新：受信者は items を直接更新できないため、mark_read RPC（security definer）を使う
 async function markIncomingAsRead() {
-  await sb.from('items').update({ read_at: new Date().toISOString() })
-    .eq('receiver_id', myUserId).eq('sender_id', partnerUserId)
-    .is('read_at', null);
+  if (!partnerUserId) return;
+  const { error } = await sb.rpc('mark_read', { p_sender: partnerUserId });
+  if (error && !markReadWarned) {
+    markReadWarned = true;
+    showError('既読更新エラー: ' + error.message + '（mark_read のSQLが未適用の可能性）');
+  }
 }
 
 async function deleteMessage(id) {
@@ -359,6 +428,7 @@ async function deleteMessage(id) {
   if (error) { showError('削除エラー: ' + error.message); return; }
   if (!data || data.length === 0) { showError('削除エラー: 権限がないか対象が見つかりません'); return; }
   allMessages = allMessages.filter(m => m.id !== id);
+  plainCache.delete(id);
   renderAll();
 }
 
@@ -367,6 +437,7 @@ async function bulkDeleteOwn() {
   const { error } = await sb.from('items').delete()
     .eq('sender_id', myUserId).eq('receiver_id', partnerUserId);
   if (error) { showError('全削除エラー: ' + error.message); return; }
+  allMessages.filter(m => m.sender_id === myUserId).forEach(m => plainCache.delete(m.id));
   allMessages = allMessages.filter(m => m.sender_id !== myUserId);
   renderAll();
 }
@@ -376,13 +447,18 @@ function startEdit(id) { editingId = id; renderAll(); }
 function cancelEdit() { editingId = null; renderAll(); }
 
 async function saveEdit(id, newPlainContent) {
-  if (!newPlainContent.trim()) return;
-  const encrypted = await encryptText(newPlainContent.trim());
-  const { error } = await sb.from('items').update({
-    content: encrypted, edited_at: new Date().toISOString()
-  }).eq('id', id);
+  const text = newPlainContent.trim();
+  if (!text) return;
+  const m = allMessages.find(x => x.id === id);
+  if (!m) return;
+  const encrypted = await encryptField(text, 'content', m);
+  const editedAt = new Date().toISOString();
+  const { error } = await sb.from('items').update({ content: encrypted, edited_at: editedAt }).eq('id', id);
   if (error) { showError('編集エラー: ' + error.message); return; }
+  m.content = encrypted;
+  m.edited_at = editedAt;
   editingId = null;
+  renderAll();
 }
 
 function setReplyTarget(id, plainContent) {
@@ -400,11 +476,17 @@ async function sendMessage() {
   const plain = input.value.trim();
   if (!plain) return;
 
-  const encryptedContent = await encryptText(plain);
-  const payload = { sender_id: myUserId, receiver_id: partnerUserId, content: encryptedContent };
+  // AAD に行IDを含めるため、IDはクライアントで先に生成する
+  const meta = { id: crypto.randomUUID(), sender_id: myUserId, receiver_id: partnerUserId };
+  const payload = {
+    id: meta.id,
+    sender_id: meta.sender_id,
+    receiver_id: meta.receiver_id,
+    content: await encryptField(plain, 'content', meta)
+  };
   if (replyTarget) {
     payload.reply_to_id = replyTarget.id;
-    payload.reply_to_content = await encryptText(replyTarget.content.slice(0, 60));
+    payload.reply_to_content = await encryptField(replyTarget.content.slice(0, 60), 'reply', meta);
   }
 
   const { error } = await sb.from('items').insert(payload);
@@ -438,26 +520,35 @@ function attachLongPress(el, plainText) {
 }
 
 // ---------- 描画 ----------
+// 復号結果をキャッシュし、新着・変更分だけ復号する
+async function decryptMessage(m) {
+  const reply = m.reply_to_content || null;
+  const hit = plainCache.get(m.id);
+  if (hit && hit.content === m.content && hit.reply === reply) return hit;
+  const entry = {
+    content: m.content,
+    reply: reply,
+    plain: await decryptField(m.content, 'content', m),
+    replyPlain: reply ? await decryptField(reply, 'reply', m) : null
+  };
+  plainCache.set(m.id, entry);
+  return entry;
+}
+
 async function renderAll() {
+  const seq = ++renderSeq;
+  const entries = await Promise.all(allMessages.map(async m => ({ m, d: await decryptMessage(m) })));
+  if (seq !== renderSeq) return; // 新しい描画要求が来ていれば、古い結果は捨てる
+
+  const visible = searchTerm
+    ? entries.filter(e => e.d.plain.toLowerCase().includes(searchTerm))
+    : entries;
+
   const chat = document.getElementById('chat');
-
-  const list = searchTerm
-    ? allMessages.filter(m => true)
-    : allMessages;
-
-  const decrypted = await Promise.all(list.map(async m => ({
-    ...m,
-    _plain: await decryptText(m.content),
-    _replyPlain: m.reply_to_content ? await decryptText(m.reply_to_content) : null
-  })));
-
-  const filtered = searchTerm
-    ? decrypted.filter(m => m._plain.toLowerCase().includes(searchTerm))
-    : decrypted;
-
   chat.innerHTML = '';
   let lastDate = null;
-  filtered.forEach(msg => {
+  visible.forEach(e => {
+    const msg = Object.assign({}, e.m, { _plain: e.d.plain, _replyPlain: e.d.replyPlain });
     const dateStr = formatDate(msg.created_at);
     if (dateStr !== lastDate) {
       const sep = document.createElement('div');
@@ -492,7 +583,7 @@ function buildMessageElement(msg) {
     saveBtn.addEventListener('click', () => saveEdit(msg.id, editInput.value));
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'キャンセル';
-        cancelBtn.addEventListener('click', cancelEdit);
+    cancelBtn.addEventListener('click', cancelEdit);
     div.appendChild(editInput);
     div.appendChild(saveBtn);
     div.appendChild(cancelBtn);
@@ -535,33 +626,6 @@ function buildMessageElement(msg) {
   return div;
 }
 
-checkInviteCode();
-
-// ===== アクセス確認 =====
-const INVITE_CODE = "0903";
-
-function checkInviteCode() {
-    const stored = localStorage.getItem('inviteVerified');
-    if (stored === 'true') {
-        document.getElementById('app-container').style.display = 'block';
-        startApp();
-        return;
-    }
-    document.getElementById('invite-setup').style.display = 'block';
-}
-
-function submitInviteCode() {
-    const input = document.getElementById('invite-code-input').value.trim();
-    if (input === INVITE_CODE) {
-        localStorage.setItem('inviteVerified', 'true');
-        document.getElementById('invite-setup').style.display = 'none';
-        document.getElementById('app-container').style.display = 'block';
-        startApp();
-    } else {
-        document.getElementById('invite-error').textContent = 'コードが違います';
-    }
-}
-
-function startApp() {
-    initAuth();
-}
+// ===== 起動（招待コードのゲートは廃止。防御は RLS と暗号化キーが担う） =====
+initAuth();
+// ===== END OF main.js =====
